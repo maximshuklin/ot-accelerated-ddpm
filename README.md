@@ -153,6 +153,13 @@ $$
 
 ## Results
 
+We reproduced results from previous works (e.g. [Truncated Diffusion Probabilistic Models and Diffusion-based Adversarial Auto-Encoders
+](https://arxiv.org/abs/2202.09671) ) and obtained the following results for accelerating diffusion models via truncation, comparing VAE/GAN-based initialization with Optimal Transport–based initialization:
+
+![Results of diffusion acceleration using VAE/GAN and OT](images/results.png)
+
+
+
 ---
 
 
