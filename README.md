@@ -38,13 +38,17 @@ All experiments were done on CIFAR-10. To keep things fair, every model used the
 
 In a diffusion model, we slowly add noise to data until it turns into something close to pure Gaussian noise. Starting from a data sample x₀ drawn from the real data distribution, the forward process is:
 
-q(x_t | x_{t−1}) = N(√(1−β_t) x_{t−1}, β_t I),   for t = 1 up to T
+$$
+q(x_t | x_{t-1}) = \mathcal{N}(\sqrt{1-\beta_t} x_{t-1}, \beta_t I), \quad t = 1, \dots, T
+$$
 
 This lets us jump straight to any timestep in closed form:
 
-q(x_t | x₀) = N(√(ᾱ_t) x₀, (1−ᾱ_t) I)
+$$
+q(x_t | x_0) = \mathcal{N}(\sqrt{\bar{\alpha}_t} x_0, (1-\bar{\alpha}_t) I)
+$$
 
-where ᾱ_t is the product of all (1 − β_s) up to step t. By the final step T, q(x_T) is basically just standard Gaussian noise.
+where $\bar{\alpha}*t = \prod*{s=1}^t (1 - \beta_s)$. As $t \to T$ (typically $T \approx 1000$), the distribution of $x_T$ approaches a standard Gaussian:
 
 ---
 
@@ -52,17 +56,24 @@ where ᾱ_t is the product of all (1 − β_s) up to step t. By the final step 
 
 The model learns to reverse this noising process step by step—going from noise back to data. Sampling requires running through all of these reverse steps, which is what makes diffusion models so expensive at inference time.
 
+$$
+x_T \to x_{T-1} \to \dots \to x_0
+$$
+
+
 ---
 
 ## Why Truncated Diffusion?
 
 To speed things up, we stop the diffusion process early—well before the final step T. Instead of starting from pure noise at step T, we start from a partially noisy sample at step Truncation step, where Truncation step is much smaller than T. Then we just run:
 
-x_{Truncation step} -> x_{Truncation step−1} -> … -> x₀
+$$
+x_{T_\text{trunc}} \to x_{T_\text{trunc}-1} \to \dots \to x_0
+$$
 
-This cuts inference time by roughly T / Truncation step.
+This reduces inference time by a factor of $T / T_\text{trunc}$.
 
-But there’s a catch: unlike the fully diffused x_T, the distribution at the truncation step isn’t Gaussian anymore. We have to learn it somehow.
+But there’s a catch: unlike the fully diffused $x_T$, the distribution at the truncation step isn’t Gaussian anymore. We have to learn it somehow.
 
 ---
 
@@ -87,16 +98,18 @@ The idea is to minimize a transport-based distance between the two, without adve
 
 Let z be a random vector from a standard Gaussian, and let x be a sample from the truncated diffusion distribution at step Truncation step.
 
-We learn a generator f_φ so that f_φ(z) looks as close as possible to the real truncated samples.
+We learn a generator $f_φ$ so that $f_φ(z)$ looks as close as possible to the real truncated samples.
 
 ### Sliced Wasserstein Objective
 
 Full Optimal Transport is too heavy in high dimensions, so we used the Sliced Wasserstein Distance instead. It’s simpler and works well in practice:
 
-L_SWD =
-(1/K) Σ_k (1/N) Σ_i ( sort(<x_i, θ_k>) − sort(<x̂_i, θ_k>) )²
+$$
+\mathcal{L}_\text{SW} = \frac{1}{K} \sum_{k=1}^K \frac{1}{N} \sum_{i=1}^N \left( \mathrm{sort} \bigl(\langle x_i, \theta_k \rangle \bigl)
+\mathrm{sort} \bigl(\langle \hat{x}_i, \theta_k \rangle \bigl) \right)^2.
+$$
 
-Here, θ_k are random projection directions, and x̂_i = f_φ(z_i).
+Here, $θ_k$ are random projection directions, and $x̂_i = f_φ(z_i)$.
 
 ---
 
