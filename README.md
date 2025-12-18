@@ -131,8 +131,8 @@ Here, $θ_k$ are random projection directions, and $x̂_i = f_φ(z_i)$.
 |---------|-------|--------------|
 | Vanilla | 60.10 | 18.834       |
 | VAE     | 2.91  | 16.393       |
+| OT      | **0.75**  | **16.031**|
 | GAN     | 0.33  | 14.004       |
-| OT      | **0.75**  | **16.031**       |
 
 Lower is better for both metrics.
 
