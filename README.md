@@ -132,12 +132,12 @@ $$
 \mathcal{L}*{OT}(f*\phi) = \mathbb{E}*{z \sim \mu} [c(f*\phi(z), x)]
 $$
 
-where $c(\cdot, \cdot)$ is a cost function (typically $L_2$). In practice, we approximate OT using:
+where $c(\cdot, \cdot)$ is a cost function (typically $L_2$). In practice, we approximate OT using W,
 
-* Sinkhorn distance
-* Entropy-regularized Wasserstein loss
-
-This provides stable gradients and efficient training.
+$$
+\mathcal{L}_\text{SW} = \frac{1}{K} \sum_{k=1}^K \frac{1}{N} \sum_{i=1}^N \left( \mathrm{sort} \bigl(\langle x_i, \theta_k \rangle \bigl)
+\mathrm{sort} \bigl(\langle \hat{x}_i, \theta_k \rangle \bigl) \right)^2.
+$$
 
 ---
 
@@ -154,4 +154,10 @@ This provides stable gradients and efficient training.
 ## Results
 
 ---
+
+
+
+
+
+
 
