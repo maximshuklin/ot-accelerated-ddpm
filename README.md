@@ -138,8 +138,16 @@ Lower is better for both metrics.
 
 Our OT-based prior did much better than starting from a plain Gaussian (vanilla). It also came close to the GAN in FID while avoiding the instability of adversarial training.
 
+### Image generation
+
+Also we compared image generation quality empirically:
+
+![Results](images/results.png)
+
 ---
 
 ## Looking at the Feature Space
 
 We also ran PCA on Inception-v3 features extracted from real and generated images, then projected down to 2D for visualization. This gives us a qualitative sense of how well the generated samples match the real distribution in a perceptually relevant space. From the plots, we noticed that the GAN prior tends to overfit—its samples cluster tightly, while the OT prior spreads out more like the real data.
+
+![PCA of Inception-v3 features for real and generated samples](images/PCA.png)
