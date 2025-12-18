@@ -1,14 +1,34 @@
 # Diffusion Model Acceleration using Optimal Transport
 
-This project explores **accelerating diffusion models** by truncating the diffusion process and learning an efficient way to sample from intermediate diffusion states using **Optimal Transport (OT)**.
+## Introduction
+
+Diffusion models have become a go-to method for generative modeling, delivering top-tier results in image, audio, and data generation. But they come with a big downside: they’re slow. Generating a single sample often means running hundreds or even thousands of denoising steps.
+
+In this project, we looked at whether Optimal Transport could help us cut down the number of steps needed while keeping sample quality high.
 
 ---
 
-## Introduction
+## Experimental Configuration and Truncation Choice
 
-Diffusion models have emerged as a powerful class of generative models, achieving state-of-the-art performance in image, audio, and data generation. However, their main drawback is **slow inference**, as generation typically requires hundreds or thousands of iterative denoising steps.
+We ran all experiments using the following setup:
 
-This project investigates how **Optimal Transport** can be used to reduce the number of diffusion steps while preserving sample quality.
+- **Maximum diffusion steps:** 1000  
+- **Truncation step:** 10  
+- **Batch size:** 128  
+- **Image resolution:** 32 by 32  
+- **Image channels:** 3  
+- **Latent dimension:** 1024  
+- **Prior training epochs:** 32  
+
+### Why We Chose Truncation Step = 10
+
+Picking the right truncation step was tricky. We wanted to speed up inference without making the problem too hard for the generator.
+
+If the truncation step is too small, the distribution we’re trying to model becomes really complex—almost too complex for a single-shot generator to learn reliably. On the other hand, if we set it too high, we lose most of the speedup benefit.
+
+After some trial and error, we landed on a truncation step of 10. At this point, the truncated diffusion distribution still has enough structure to be learnable, but we also get a nice speed boost—roughly 100 times fewer diffusion steps. Also, at 10 steps, the generated images are still recognizable, unlike when we tried values above 50, where quality started to drop noticeably.
+
+All experiments were done on CIFAR-10. To keep things fair, every model used the same generator architecture during training and evaluation.
 
 ---
 
@@ -16,155 +36,97 @@ This project investigates how **Optimal Transport** can be used to reduce the nu
 
 ### Forward (Diffusion) Process
 
-A standard diffusion model defines a **forward noising process** that gradually transforms data into Gaussian noise. Given a data sample $x_0 \sim p_\text{data}$, the forward process is defined as:
+In a diffusion model, we slowly add noise to data until it turns into something close to pure Gaussian noise. Starting from a data sample x₀ drawn from the real data distribution, the forward process is:
 
-$$
-q(x_t | x_{t-1}) = \mathcal{N}(\sqrt{1-\beta_t} x_{t-1}, \beta_t I), \quad t = 1, \dots, T
-$$
+q(x_t | x_{t−1}) = N(√(1−β_t) x_{t−1}, β_t I),   for t = 1 up to T
 
-With a suitable noise schedule ${\beta_t}_{t=1}^T$, this process admits a closed-form expression:
+This lets us jump straight to any timestep in closed form:
 
-$$
-q(x_t | x_0) = \mathcal{N}(\sqrt{\bar{\alpha}_t} x_0, (1-\bar{\alpha}_t) I)
-$$
+q(x_t | x₀) = N(√(ᾱ_t) x₀, (1−ᾱ_t) I)
 
-where $\bar{\alpha}*t = \prod*{s=1}^t (1 - \beta_s)$. As $t \to T$ (typically $T \approx 1000$), the distribution of $x_T$ approaches a standard Gaussian:
-
-$$
-q(x_T) \approx \mathcal{N}(0, I)
-$$
+where ᾱ_t is the product of all (1 − β_s) up to step t. By the final step T, q(x_T) is basically just standard Gaussian noise.
 
 ---
 
 ### Reverse (Denoising) Process
 
-The goal of a diffusion model is to **learn the reverse process**:
-
-$$
-p_\theta(x_{t-1} | x_t)
-$$
-
-which iteratively removes noise from $x_T$ to recover a sample from the data distribution. This is done by training a neural network (usually a U-Net) to predict either the noise $\varepsilon$, the clean sample $x_0$, or a velocity parameterization.
-
-Sampling requires executing all reverse steps:
-
-$$
-x_T \to x_{T-1} \to \dots \to x_0
-$$
-
-This iterative nature makes inference **computationally expensive**.
+The model learns to reverse this noising process step by step—going from noise back to data. Sampling requires running through all of these reverse steps, which is what makes diffusion models so expensive at inference time.
 
 ---
 
-## Motivation: Truncated Diffusion
+## Why Truncated Diffusion?
 
-The key observation is that diffusion models only guarantee that **$x_T$ is Gaussian**, not that intermediate states $x_t$ are easy to sample from.
+To speed things up, we stop the diffusion process early—well before the final step T. Instead of starting from pure noise at step T, we start from a partially noisy sample at step Truncation step, where Truncation step is much smaller than T. Then we just run:
 
-To accelerate inference, we truncate the diffusion chain:
+x_{Truncation step} -> x_{Truncation step−1} -> … -> x₀
 
-$$
-T_\text{trunc} < T
-$$
+This cuts inference time by roughly T / Truncation step.
 
-and perform sampling as:
-
-$$
-x_{T_\text{trunc}} \to x_{T_\text{trunc}-1} \to \dots \to x_0
-$$
-
-This reduces inference time by a factor of $T / T_\text{trunc}$.
-
-### Challenge
-
-Unlike $x_T$, the distribution of $x_{T_\text{trunc}}$:
-
-$$
-q(x_{T_\text{trunc}})
-$$
-
-is **not Gaussian** and generally unknown. Therefore, we need a method to efficiently sample from this distribution.
+But there’s a catch: unlike the fully diffused x_T, the distribution at the truncation step isn’t Gaussian anymore. We have to learn it somehow.
 
 ---
 
-## Existing Approaches
+## How Others Have Tried to Solve This
 
-Several strategies can be used to approximate or sample from $q(x_{T_\text{trunc}})$:
+### Latent Variable Models (VAE / GAN)
 
-### 1. Latent Variable Models (VAE / GAN)
+One common approach is to train a separate generative model—like a VAE or a GAN—on samples taken at the truncation step. Then, at inference time, you sample from that model instead of from a Gaussian.
 
-* Train a VAE or GAN to model samples of $x_{T_\text{trunc}}$
-* During inference, sample from the latent space and decode to obtain $x_{T_\text{trunc}}$
-* Pros: flexible and expressive
-* Cons: additional model, unstable training (GANs), reconstruction bias (VAEs)
+- Good: flexible, expressive
+- Bad: GANs can be unstable, VAEs often introduce blur or bias
 
-### 2. Optimal Transport (This Work)
+### Optimal Transport (Our Approach)
 
-* Learn a **transport map** from a simple prior (e.g., Gaussian) to $q(x_{T_\text{trunc}})$
-* Avoids adversarial training
-* Provides a principled geometric framework
+We tried something different: using Optimal Transport to learn a generator that maps from a simple Gaussian prior directly to the truncated diffusion distribution.
+
+The idea is to minimize a transport-based distance between the two, without adversarial training. We’re matching distributions directly, not just maximizing likelihood.
 
 ---
 
-## Optimal Transport Formulation
+## Optimal Transport Setup
 
-### Problem Setup
+Let z be a random vector from a standard Gaussian, and let x be a sample from the truncated diffusion distribution at step Truncation step.
 
-Let:
+We learn a generator f_φ so that f_φ(z) looks as close as possible to the real truncated samples.
 
-* $z \sim \mathcal{N}(0, I)$ be a simple base distribution
-* $x \sim q(x_{T_\text{trunc}})$ be samples obtained by forward diffusion
+### Sliced Wasserstein Objective
 
-We aim to learn a map $f_\phi$ such that:
+Full Optimal Transport is too heavy in high dimensions, so we used the Sliced Wasserstein Distance instead. It’s simpler and works well in practice:
 
-$$
-f_\phi(z) \sim q(x_{T_\text{trunc}})
-$$
+L_SWD =
+(1/K) Σ_k (1/N) Σ_i ( sort(<x_i, θ_k>) − sort(<x̂_i, θ_k>) )²
 
-This is formulated as an **Optimal Transport problem** between distributions $\mu = \mathcal{N}(0, I)$ and $\nu = q(x_{T_\text{trunc}})$.
+Here, θ_k are random projection directions, and x̂_i = f_φ(z_i).
 
 ---
 
-### OT Objective
+## How We Trained Everything
 
-The optimal transport cost is defined as:
-
-$$
-\mathcal{L}*{OT}(f*\phi) = \mathbb{E}*{z \sim \mu} [c(f*\phi(z), x)]
-$$
-
-where $c(\cdot, \cdot)$ is a cost function (typically $L_2$). In practice, we approximate OT using W,
-
-$$
-\mathcal{L}_\text{SW} = \frac{1}{K} \sum_{k=1}^K \frac{1}{N} \sum_{i=1}^N \left( \mathrm{sort} \bigl(\langle x_i, \theta_k \rangle \bigl)
-\mathrm{sort} \bigl(\langle \hat{x}_i, \theta_k \rangle \bigl) \right)^2.
-$$
-
----
-
-## Training Pipeline
-
-1. Sample real data $x_0 \sim p_\text{data}$
-2. Apply forward diffusion to obtain $x_{T_\text{trunc}}$
-3. Sample noise $z \sim \mathcal{N}(0, I)$
-4. Train transport network $f_\phi$ using OT loss
-5. Freeze $f_\phi$ after training
+1. First, we generated a dataset of truncated diffusion samples (at step Truncation step).
+2. We trained three different priors on the same data: a VAE, a GAN, and our OT-based generator.
+3. All models used the same DCGAN-style generator architecture for fairness.
+4. Once trained, we froze the priors.
+5. Finally, we used each prior to initialize the truncated reverse diffusion process and compared results.
 
 ---
 
 ## Results
 
-We reproduced results from previous works (e.g. [Truncated Diffusion Probabilistic Models and Diffusion-based Adversarial Auto-Encoders
-](https://arxiv.org/abs/2202.09671) ) and obtained the following results for accelerating diffusion models via truncation, comparing VAE/GAN-based initialization with Optimal Transport–based initialization:
+### Numbers
 
-![Results of diffusion acceleration using VAE/GAN and OT](images/results.png)
+| Method  | FID ↓ | RecallDist ↓ |
+|---------|-------|--------------|
+| Vanilla | 60.10 | 18.834       |
+| VAE     | 2.91  | 16.393       |
+| GAN     | 0.33  | 14.004       |
+| OT      | **0.75**  | **16.031**       |
 
+Lower is better for both metrics.
 
+Our OT-based prior did much better than starting from a plain Gaussian (vanilla). It also came close to the GAN in FID while avoiding the instability of adversarial training.
 
 ---
 
+## Looking at the Feature Space
 
-
-
-
-
-
+We also ran PCA on Inception-v3 features extracted from real and generated images, then projected down to 2D for visualization. This gives us a qualitative sense of how well the generated samples match the real distribution in a perceptually relevant space. From the plots, we noticed that the GAN prior tends to overfit—its samples cluster tightly, while the OT prior spreads out more like the real data.
